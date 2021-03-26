@@ -1,0 +1,13 @@
+# open in a new RStudio Session (Ctrl + Shift + F10)
+# loaded package dependencies can not be updated
+install.packages('shiny')
+install.packages('shinydashboard')
+install.packages('shinyWidgets')
+install.packages('shinycssloaders')
+install.packages('DT')
+install.packages('readxl')
+install.packages('dplyr')
+install.packages('tibble')
+install.packages('stringr')
+install.packages('plotly')
+install.packages('rstudioapi')

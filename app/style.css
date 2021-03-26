@@ -1,0 +1,20 @@
+.main-header {
+  position: fixed;
+  width:100%;
+}
+
+.content {
+  margin-top: 50px;
+}
+
+.shiny-notification {
+              height: 60px;
+              width: 320px;
+              position:fixed;
+              top: calc(60% - 30px);;
+              left: calc(50% - 160px);;
+            }
+
+div.dt-buttons {
+  float: left;
+}
