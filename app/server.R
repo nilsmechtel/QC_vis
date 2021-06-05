@@ -231,12 +231,30 @@ CC.calc <- function(data, compounds, level) {
              Compound %in% compounds,
              !is.na(HitName)) %>%
       select(RT, TF, Area, Compound)
+    if (nrow(tmp) == 0) {
+      rt.mean <- NA
+      rt.sd <- NA
+      tf.mean <- NA
+      tf.sd <- NA
+      area.sum <- NA
+    } else {
+      rt.mean = mean(tmp$RT)
+      tf.mean = mean(tmp$TF)
+      area.sum = sum(tmp$Area)
+      if (nrow(tmp) == 1) {
+        rt.sd <- NA
+        tf.sd <- NA
+      } else {
+        rt.sd = sd(tmp$RT)
+        tf.sd = sd(tmp$TF)
+      }
+    }
     out.df <- data.frame(Date = date,
-                         RT.mean = mean(tmp$RT),
-                         RT.sd = sd(tmp$RT),
-                         TF.mean = mean(tmp$TF),
-                         TF.sd = sd(tmp$TF),
-                         Area.sum = sum(tmp$Area))
+                         RT.mean = rt.mean,
+                         RT.sd = rt.sd,
+                         TF.mean = tf.mean,
+                         TF.sd = tf.sd,
+                         Area.sum = area.sum)
     for (compound in compounds) {
       out.df[, compound] <- tmp %>%
         filter(Compound == compound) %>%
@@ -257,24 +275,33 @@ ratios.calc <- function(unique.data, level,
              Date == date) %>%
       select(Compound, Area, TF)
     
-    ratio1.area <- tmp %>% filter(Compound == r1u) %>% select(Area) %>% deframe() /
-      tmp %>% filter(Compound == r1d) %>% select(Area) %>% deframe()
+    if (nrow(tmp) > 0) {
+      ratio1.area <- tmp %>% filter(Compound == r1u) %>% select(Area) %>% deframe() /
+        tmp %>% filter(Compound == r1d) %>% select(Area) %>% deframe()
+      
+      tario2.area <- tmp %>% filter(Compound == r2u) %>% select(Area) %>% deframe() /
+        tmp %>% filter(Compound == r2d) %>% select(Area) %>% deframe()
+      
+      ratio3.area <- tmp %>% filter(Compound == r3u) %>% select(Area) %>% deframe() /
+        tmp %>% filter(Compound == r3d) %>% select(Area) %>% deframe()
+      
+      ratio1.tf <- tmp %>% filter(Compound == r1u) %>% select(TF) %>% deframe() /
+        tmp %>% filter(Compound == r1d) %>% select(TF) %>% deframe()
+      
+      tario2.tf <- tmp %>% filter(Compound == r2u) %>% select(TF) %>% deframe() /
+        tmp %>% filter(Compound == r2d) %>% select(TF) %>% deframe()
+      
+      ratio3.tf <- tmp %>% filter(Compound == r3u) %>% select(TF) %>% deframe() /
+        tmp %>% filter(Compound == r3d) %>% select(TF) %>% deframe()
+    } else {
+      ratio1.area <- NA
+      tario2.area <- NA
+      ratio3.area <- NA
+      ratio1.tf <- NA
+      tario2.tf <- NA
+      ratio3.tf <- NA
+    }
     
-    tario2.area <- tmp %>% filter(Compound == r2u) %>% select(Area) %>% deframe() /
-      tmp %>% filter(Compound == r2d) %>% select(Area) %>% deframe()
-    
-    ratio3.area <- tmp %>% filter(Compound == r3u) %>% select(Area) %>% deframe() /
-      tmp %>% filter(Compound == r3d) %>% select(Area) %>% deframe()
-    
-    ratio1.tf <- tmp %>% filter(Compound == r1u) %>% select(TF) %>% deframe() /
-      tmp %>% filter(Compound == r1d) %>% select(TF) %>% deframe()
-    
-    tario2.tf <- tmp %>% filter(Compound == r2u) %>% select(TF) %>% deframe() /
-      tmp %>% filter(Compound == r2d) %>% select(TF) %>% deframe()
-    
-    ratio3.tf <- tmp %>% filter(Compound == r3u) %>% select(TF) %>% deframe() /
-      tmp %>% filter(Compound == r3d) %>% select(TF) %>% deframe()
-
     out.df <- data.frame(Date = date,
                          Ratio1.Area = ratio1.area,
                          Ratio2.Area = tario2.area,
@@ -285,6 +312,34 @@ ratios.calc <- function(unique.data, level,
 
     return(out.df)
   }) %>% bind_rows()
+}
+
+# ratio control cards #
+ratio.CC <- function(ratio.CC.data, dates.na, first.date, last.date, title) {
+  mean.ratio <- mean(ratio.CC.data$Values, na.rm = TRUE)
+  sd.ratio <- sd(ratio.CC.data$Values, na.rm = TRUE)
+  print(ratio.CC.data)
+  print(dates.na)
+  p <- plot_ly(data = ratio.CC.data,
+               x = ~Date, y = ~Values,
+               type = 'scatter', mode = 'lines+markers', color = I('black'),
+               name = 'Measured')
+  if (length(dates.na) > 0) {
+    p <- p %>% 
+      add_markers(x = dates.na, y = rep(mean.ratio, length(dates.na)),
+                  marker = list(symbol = 'x-open', size = 8),
+                  error_y = list(array = rep(NA, length(dates.na))),
+                  name = 'Not detected')
+  }
+  p <- p %>%
+    layout(yaxis = list(range = get.min.max(values = ratio.CC.data$Values),
+                        zeroline = FALSE, title = title),
+           xaxis = list(range = c(first.date-3, last.date+3),
+                        zeroline = FALSE),
+           shapes = CC.lines(mean.ratio,
+                             sd.ratio,
+                             NA))
+  return(p)
 }
 
 # generate data where each compound at a certain date and QC level only has a single value
@@ -370,15 +425,21 @@ alert.calc <- function(unique.data) {
 # generate a dataframe of Westgard rule violations
 # 1:2s, 1:3s, 2:2s, R:4s, 4:1s, 10x
 alert <- function(alert.data) {
-  alert.list <- lapply(seq(to = nrow(alert.data), by = length(unique(alert.data$Date))), function(start) {
-    alert.data[start:(start+length(unique(alert.data$Date))-1),]
-  })
+  alert.list <- lapply(unique(alert.data$Compound), function(compound) {
+    lapply(unique(alert.data$QCLevel), function(level) {
+      filter(alert.data,
+             QCLevel == level,
+             Compound == compound)
+    })
+  }) %>%
+    unlist(recursive = FALSE)
   
   alert.df <- lapply(c('RT', 'Area'), function(parameter){
     mean.diff <- paste(parameter, 'mean.diff', sep = '.')
     sd <- paste(parameter, 'sd', sep = '.')
-    return(lapply(alert.list, function(df) {
+    out <- lapply(alert.list, function(df) {
       if (df %>% filter(!is.na(df[,sd])) %>% nrow() > 0) {
+        df <- filter(df, !is.na(df[,mean.diff]))
         # 1:3s #
         error_1.3s <- df %>% filter(abs(df[,mean.diff]) > 3*df[,sd]) %>% nrow() > 0 # any measurement 3sd diff from mean
         # 1:2s # 
@@ -403,7 +464,7 @@ alert <- function(alert.data) {
         result <- rle(df[,mean.diff] > df[,sd])
         error_4.1s <- any(result$lengths >= 4 & result$values == TRUE) # 4 consecutive measurements 1sd above mean
         if (!error_4.1s) {
-          result <- rle(df[,mean.diff] < df[,sd])
+          result <- rle(df[,mean.diff] < -df[,sd])
           error_4.1s <- any(result$lengths >= 4 & result$values == TRUE) # 4 consecutive measurements 1sd below mean
         }
         
@@ -435,7 +496,8 @@ alert <- function(alert.data) {
                         Error_R.4s = error_R.4s,
                         Error_4.1s = error_4.1s,
                         Error_10x = error_10x))
-    }) %>% bind_rows())
+    }) %>% bind_rows()
+    return(out)
   }) %>% bind_rows()
   
   return(alert.df)
@@ -470,12 +532,10 @@ get.min.max <- function(values, errors = 0, ref = NA) {
                 values + errors,
                 ref),
               na.rm = TRUE)
-  if (!is.na(ref)) {
-    if (ymin == ref) {
-      ymin = ymin - 0.05*(ymax - ymin)
-    } else if (ymax == ref) {
-      ymax = ymax + 0.05*(ymax - ymin)
-    }
+  if (ymin == ref) {
+    ymin = ymin - 0.05*(ymax - ymin)
+  } else if (ymax == ref) {
+    ymax = ymax + 0.05*(ymax - ymin)
   }
   return(c(ymin, ymax))
 }
@@ -493,14 +553,16 @@ hline <- function(y, color = 'red', dash = 'dot', width = 1) {
 # Title, Y-Axis, UCL, UWL, Mean, LWL, LCL #
 CC.lines <- function(m, sd, ref) {
   hline.ls <- list(
-    hline(m+3*sd, width = 2), # UCL
-    hline(m+2*sd), # UWL
-    hline(m, color = 'green', width = 2), # Mean
-    hline(m-2*sd), # LWL
-    hline(m-3*sd, width = 2) # LCL
+    hline(m, color = 'green', width = 2) # Mean
   )
+  if (!is.na(sd)) {
+    hline.ls[[2]] <- hline(m+3*sd, width = 2) # UCL
+    hline.ls[[3]] <- hline(m+2*sd) # UWL
+    hline.ls[[4]] <- hline(m-2*sd) # LWL
+    hline.ls[[5]] <- hline(m-3*sd, width = 2) # LCL
+  }
   if (!is.na(ref)) {
-    hline.ls[[6]] <- hline(ref, color = 'gray', dash = 'line') # Reference
+    hline.ls[[length(hline.ls)+1]] <- hline(ref, color = 'gray', dash = 'line') # Reference
   }
   return(hline.ls)
 }
@@ -906,6 +968,7 @@ server <- function(input, output, session) {
         alert.df <- alert(alert.data)
         alert.df <- alert.df %>% filter(rowSums(alert.df[,4:9]) > 0)
         alert.df[alert.df == FALSE] <- NA
+        alert.df[alert.df == TRUE] <- 'True'
         
         output$alert.RT <- DT::renderDataTable(alert.df %>% filter(Parameter == 'RT') %>% select(-Parameter),
                                                server = FALSE,
@@ -1115,59 +1178,96 @@ server <- function(input, output, session) {
                          input$compoundPicker,
                          colnames(rv$overview.df)[input$overview_columns_selected])
       
-      if (CC.data %>% filter(!is.na(RT.mean)) %>% nrow() < 3) {
-        showNotification('Not enough matches to plot Control Coards (min. 3 data points)!',
+      ref <- ifelse(length(input$compoundPicker) == 1,
+                    rv$compounds.df[input$compoundPicker, 'RT'],
+                    NA)
+      
+      dates.na <- CC.data[is.na(CC.data$RT.mean), 'Date']
+      first.date <- sort(CC.data$Date)[1]
+      last.date <- tail(sort(CC.data$Date),1)
+      CC.data <- filter(CC.data, !is.na(RT.mean))
+      
+      if (nrow(CC.data) == 0) {
+        showNotification('Not enough matches to plot Control Cards!',
                          type = 'warning', duration = 3)
       } else {
         # RT #
-        ref <- ifelse(length(input$compoundPicker) == 1,
-                     rv$compounds.df[input$compoundPicker, 'RT'],
-                     NA)
-        output$CC.RT <- renderPlotly({
-          plot_ly(data = CC.data,
-                  x = ~Date, y = ~RT.mean,
-                  type = 'scatter', mode = 'lines+markers', color = I('black'),
-                  error_y = ~list(array = RT.sd,
-                                  color = '#000000')) %>%
-            layout(yaxis = list(range = RT.min.max <- get.min.max(values = CC.data$RT.mean,
-                                                                  errors = CC.data$RT.sd,
-                                                                  ref = ref),
-                                zeroline = FALSE, title = 'Minutes'),
-                   xaxis = list(range = c(sort(CC.data$Date)[1]-3, tail(sort(CC.data$Date),1)+3),
-                                zeroline = FALSE),
-                   shapes = CC.lines(mean(CC.data$RT.mean),
-                                     sd(CC.data$RT.mean),
-                                     ref))
-        })
+        mean.rt <- mean(CC.data$RT.mean, na.rm = TRUE)
+        sd.rt <- sd(CC.data$RT.mean, na.rm = TRUE)
+        p.RT <- plot_ly(data = CC.data,
+                     x = ~Date, y = ~RT.mean,
+                     type = 'scatter', mode = 'lines+markers', color = I('black'),
+                     error_y = ~list(array = RT.sd,
+                                     color = '#000000'),
+                     name = 'Measured')
+        if (length(dates.na) > 0) {
+          p.RT <- p.RT %>% 
+            add_markers(x = dates.na, y = rep(mean.rt, length(dates.na)),
+                        marker = list(symbol = 'x-open', size = 8),
+                        error_y = list(array = rep(NA, length(dates.na))),
+                        name = 'Not detected')
+        }
+        p.RT <- p.RT %>%
+          layout(yaxis = list(range = get.min.max(values = CC.data$RT.mean,
+                                                  errors = CC.data$RT.sd,
+                                                  ref = ref),
+                              zeroline = FALSE, title = 'Minutes'),
+                 xaxis = list(range = c(first.date-3, last.date+3),
+                              zeroline = FALSE),
+                 shapes = CC.lines(mean.rt,
+                                   sd.rt,
+                                   ref))
+        output$CC.RT <- renderPlotly({p.RT})
         # TF #
-        output$CC.TF <- renderPlotly({
-          plot_ly(data = CC.data,
-                  x = ~Date, y = ~TF.mean,
-                  type = 'scatter', mode = 'lines+markers', color = I('black'),
-                  error_y = ~list(array = TF.sd,
-                                  color = '#000000')) %>%
-            layout(yaxis = list(range = get.min.max(values = CC.data$TF.mean,
-                                                    errors = CC.data$TF.sd),
-                                zeroline = FALSE, title = 'TF'),
-                   xaxis = list(range = c(sort(CC.data$Date)[1]-3, tail(sort(CC.data$Date),1)+3),
-                                zeroline = FALSE),
-                   shapes = CC.lines(mean(CC.data$TF.mean),
-                                     sd(CC.data$TF.mean),
-                                     NA))
-        })
+        mean.tf <- mean(CC.data$TF.mean, na.rm = TRUE)
+        sd.tf <- sd(CC.data$TF.mean, na.rm = TRUE)
+        p.TF <- plot_ly(data = CC.data,
+                        x = ~Date, y = ~TF.mean,
+                        type = 'scatter', mode = 'lines+markers', color = I('black'),
+                        error_y = ~list(array = TF.sd,
+                                        color = '#000000'),
+                        name = 'Measured')
+        if (length(dates.na) > 0) {
+          p.TF <- p.TF %>% 
+            add_markers(x = dates.na, y = rep(mean.tf, length(dates.na)),
+                        marker = list(symbol = 'x-open', size = 8),
+                        error_y = list(array = rep(NA, length(dates.na))),
+                        name = 'Not detected')
+        }
+        p.TF <- p.TF %>%
+          layout(yaxis = list(range = get.min.max(values = CC.data$TF.mean,
+                                                  errors = CC.data$TF.sd),
+                              zeroline = FALSE, title = 'TF'),
+                 xaxis = list(range = c(first.date-3, last.date+3),
+                              zeroline = FALSE),
+                 shapes = CC.lines(mean.tf,
+                                   sd.tf,
+                                   NA))
+        output$CC.TF <- renderPlotly({p.TF})
         # Area #
-        output$CC.Area <- renderPlotly({
-          plot_ly(data = CC.data,
-                  x = ~Date, y = ~Area.sum,
-                  type = 'scatter', mode = 'lines+markers', color = I('black')) %>%
-            layout(yaxis = list(range = get.min.max(values = CC.data$Area.sum),
-                                zeroline = FALSE, title = 'Counts'),
-                   xaxis = list(range = c(sort(CC.data$Date)[1]-3, tail(sort(CC.data$Date),1)+3),
-                                zeroline = FALSE),
-                   shapes = CC.lines(mean(CC.data$Area.sum),
-                                     sd(CC.data$Area.sum),
-                                     NA))
-        })
+        mean.area <- mean(CC.data$Area.sum, na.rm = TRUE)
+        sd.area <- sd(CC.data$Area.sum, na.rm = TRUE)
+        p.Area <- plot_ly(data = CC.data,
+                          x = ~Date, y = ~Area.sum,
+                          type = 'scatter', mode = 'lines+markers',
+                          color = I('black'), name = 'Measured')
+        if (length(dates.na) > 0) {
+          p.Area <- p.Area %>% 
+            add_markers(x = dates.na, y = rep(0, length(dates.na)),
+                        marker = list(symbol = 'x-open', size = 8),
+                        name = 'Not detected')
+        }
+        p.Area <- p.Area %>%
+          layout(yaxis = list(range = get.min.max(values = CC.data$Area.sum,
+                                                  ref = 0),
+                              zeroline = FALSE, title = 'Counts'),
+                 xaxis = list(range = c(first.date-3, last.date+3),
+                              zeroline = FALSE),
+                 shapes = CC.lines(mean.area,
+                                   sd.area,
+                                   NA))
+        output$CC.Area <- renderPlotly({p.Area})
+        
         # Matched compounds #
         output$CC.matches <- renderTable(CC.data %>%
                                            select(-c(RT.mean, RT.sd, TF.mean, TF.sd, Area.sum)) %>%
@@ -1215,95 +1315,78 @@ server <- function(input, output, session) {
                                  input$compoundPickerR1u, input$compoundPickerR1d,
                                  input$compoundPickerR2u, input$compoundPickerR2d,
                                  input$compoundPickerR3u, input$compoundPickerR3d)
-      if (ratios.data %>% nrow() < 3) {
-        showNotification('Not enough matches to plot Control Cards (min. 3 data points)!',
-                         type = 'warning', duration = 3)
-        ratios.data <- NULL
+      
+      print(ratios.data)
+      
+      first.date <- sort(ratios.data$Date)[1]
+      last.date <- tail(sort(ratios.data$Date),1)
+
+      unable.ratios <- FALSE
+      
+      # Ratio 1 #
+      dates.na.ratio1 <- ratios.data[is.na(ratios.data$Ratio1.Area), 'Date']
+      tmp.ratios.data1 <- filter(ratios.data, !is.na(Ratio1.Area))
+      if (nrow(tmp.ratios.data1) == 0) {
+        unable.ratios <- TRUE
+        output$Ratio1.Area <- NULL
+        output$Ratio1.TF <- NULL
       } else {
-        for (col in seq(2,7)) {
-          if (ratios.data %>% filter(!is.na(ratios.data[, col])) %>% nrow() < 3) {
-            ratios.data[, col] <- 0
-          }
-        }
+        output$Ratio1.Area <- renderPlotly({
+          ratio.CC(data.frame(Date = tmp.ratios.data1$Date,
+                              Values = tmp.ratios.data1$Ratio1.Area),
+                   dates.na.ratio1, first.date, last.date, 'Area ratio')
+        })
+        output$Ratio1.TF <- renderPlotly({
+          ratio.CC(data.frame(Date = tmp.ratios.data1$Date,
+                              Values = tmp.ratios.data1$Ratio1.TF),
+                   dates.na.ratio1, first.date, last.date, 'TF ratio')
+        })
       }
-      output$Ratio1.Area <- renderPlotly({
-        plot_ly(data = ratios.data,
-                x = ~Date, y = ~Ratio1.Area,
-                type = 'scatter', mode = 'lines+markers', color = I('black')) %>%
-          layout(yaxis = list(range = get.min.max(values = ratios.data$Ratio1.Area),
-                              zeroline = FALSE, title = 'Area ratio'),
-                 xaxis = list(range = c(sort(ratios.data$Date)[1]-3, tail(sort(ratios.data$Date),1)+3),
-                              zeroline = FALSE),
-                 shapes = CC.lines(mean(ratios.data$Ratio1.Area),
-                                   sd(ratios.data$Ratio1.Area),
-                                   NA))
-      })
-
-      output$Ratio1.TF <- renderPlotly({
-        plot_ly(data = ratios.data,
-                x = ~Date, y = ~Ratio1.TF,
-                type = 'scatter', mode = 'lines+markers', color = I('black')) %>%
-          layout(yaxis = list(range = get.min.max(values = ratios.data$Ratio1.TF),
-                              zeroline = FALSE, title = 'TF ratio'),
-                 xaxis = list(range = c(sort(ratios.data$Date)[1]-3, tail(sort(ratios.data$Date),1)+3),
-                              zeroline = FALSE),
-                 shapes = CC.lines(mean(ratios.data$Ratio1.TF),
-                                   sd(ratios.data$Ratio1.TF),
-                                   NA))
-      })
-
-      output$Ratio2.Area <- renderPlotly({
-        plot_ly(data = ratios.data,
-                x = ~Date, y = ~Ratio2.Area,
-                type = 'scatter', mode = 'lines+markers', color = I('black')) %>%
-          layout(yaxis = list(range = get.min.max(values = ratios.data$Ratio2.Area),
-                              zeroline = FALSE, title = 'Area ratio'),
-                 xaxis = list(range = c(sort(ratios.data$Date)[1]-3, tail(sort(ratios.data$Date),1)+3),
-                              zeroline = FALSE),
-                 shapes = CC.lines(mean(ratios.data$Ratio2.Area),
-                                   sd(ratios.data$Ratio2.Area),
-                                   NA))
-      })
-
-      output$Ratio2.TF <- renderPlotly({
-        plot_ly(data = ratios.data,
-                x = ~Date, y = ~Ratio2.TF,
-                type = 'scatter', mode = 'lines+markers', color = I('black')) %>%
-          layout(yaxis = list(range = get.min.max(values = ratios.data$Ratio2.TF),
-                              zeroline = FALSE, title = 'TF ratio'),
-                 xaxis = list(range = c(sort(ratios.data$Date)[1]-3, tail(sort(ratios.data$Date),1)+3),
-                              zeroline = FALSE),
-                 shapes = CC.lines(mean(ratios.data$Ratio2.TF),
-                                   sd(ratios.data$Ratio2.TF),
-                                   NA))
-      })
-
-      output$Ratio3.Area <- renderPlotly({
-        plot_ly(data = ratios.data,
-                x = ~Date, y = ~Ratio3.Area,
-                type = 'scatter', mode = 'lines+markers', color = I('black')) %>%
-          layout(yaxis = list(range = get.min.max(values = ratios.data$Ratio3.Area),
-                              zeroline = FALSE, title = 'Area ratio'),
-                 xaxis = list(range = c(sort(ratios.data$Date)[1]-3, tail(sort(ratios.data$Date),1)+3),
-                              zeroline = FALSE),
-                 shapes = CC.lines(mean(ratios.data$Ratio3.Area),
-                                   sd(ratios.data$Ratio3.Area),
-                                   NA))
-      })
-
-      output$Ratio3.TF <- renderPlotly({
-        plot_ly(data = ratios.data,
-                x = ~Date, y = ~Ratio3.TF,
-                type = 'scatter', mode = 'lines+markers', color = I('black')) %>%
-          layout(yaxis = list(range = get.min.max(values = ratios.data$Ratio3.TF),
-                              zeroline = FALSE, title = 'TF ratio'),
-                 xaxis = list(range = c(sort(ratios.data$Date)[1]-3, tail(sort(ratios.data$Date),1)+3),
-                              zeroline = FALSE),
-                 shapes = CC.lines(mean(ratios.data$Ratio3.TF),
-                                   sd(ratios.data$Ratio3.TF),
-                                   NA))
-      })
-
+      
+      # Ratio 2 #
+      dates.na.ratio2 <- ratios.data[is.na(ratios.data$Ratio2.Area), 'Date']
+      tmp.ratios.data2 <- filter(ratios.data, !is.na(Ratio2.Area))
+      if (nrow(tmp.ratios.data2) == 0) {
+        unable.ratios <- TRUE
+        output$Ratio2.Area <- NULL
+        output$Ratio2.TF <- NULL
+      } else {
+        output$Ratio2.Area <- renderPlotly({
+          ratio.CC(data.frame(Date = tmp.ratios.data2$Date,
+                              Values = tmp.ratios.data2$Ratio2.Area),
+                   dates.na.ratio2, first.date, last.date, 'Area ratio')
+        })
+        output$Ratio2.TF <- renderPlotly({
+          ratio.CC(data.frame(Date = tmp.ratios.data2$Date,
+                              Values = tmp.ratios.data2$Ratio2.TF),
+                   dates.na.ratio2, first.date, last.date, 'TF ratio')
+        })
+      }
+      
+      # Ratio 3 #
+      dates.na.ratio3 <- ratios.data[is.na(ratios.data$Ratio3.Area), 'Date']
+      tmp.ratios.data3 <- filter(ratios.data, !is.na(Ratio3.Area))
+      if (nrow(tmp.ratios.data3) == 0) {
+        unable.ratios <- TRUE
+        output$Ratio3.Area <- NULL
+        output$Ratio3.TF <- NULL
+      } else {
+        output$Ratio3.Area <- renderPlotly({
+          ratio.CC(data.frame(Date = tmp.ratios.data3$Date,
+                              Values = tmp.ratios.data3$Ratio3.Area),
+                   dates.na.ratio3, first.date, last.date, 'Area ratio')
+        })
+        output$Ratio3.TF <- renderPlotly({
+          ratio.CC(data.frame(Date = tmp.ratios.data3$Date,
+                              Values = tmp.ratios.data3$Ratio3.TF),
+                   dates.na.ratio3, first.date, last.date, 'TF ratio')
+        })
+      }
+      
+      if (unable.ratios == TRUE) {
+        showNotification('Not enough matches to plot all ratios!',
+                         type = 'warning', duration = 3)
+      }
       output$Ratios <- renderUI({
         fluidRow(
           column(8, offset = 4,
